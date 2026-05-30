@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
