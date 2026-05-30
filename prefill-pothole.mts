@@ -36,6 +36,7 @@ type PotholeIssue = {
   exactLocation: string; // required: distance from intersection, landmarks, side of road
   description: string; // "Describe the size and depth of the road damage."
   majorRoad: "Yes" | "No"; // required dropdown: "Is the road damage on a major road?"
+  shoeBoxOrLarger: "Yes" | "No"; // required dropdown: "…size of a shoe box or larger?"
   additionalInfo?: string; // optional
   reporter?: { firstName?: string; lastName?: string; email?: string; phone?: string };
 };
@@ -49,6 +50,7 @@ const DEFAULT_ISSUE: PotholeIssue = {
   exactLocation: "Northbound curb lane, about 10m south of the Queen St W and York St intersection, in front of the building entrance.",
   description: "Large pothole in the curb lane, about 40cm wide and deep enough to jolt a car.",
   majorRoad: "Yes",
+  shoeBoxOrLarger: "Yes",
   additionalInfo: "",
   reporter: { firstName: "Ben", email: "benz16107@gmail.com" },
 };
@@ -122,6 +124,31 @@ async function selectDropdown(labelRe: RegExp, value: string | undefined, label:
   } catch {
     try { await sel.selectOption(value); console.log(`  ✓ ${label} → ${value}`); }
     catch { console.log(`  ✗ ${label}: option "${value}" not selectable — set it manually`); }
+  }
+}
+
+/**
+ * Surface any visible <select> still left on its "Select" placeholder — i.e. a
+ * required dropdown we haven't mapped yet — so unknown questions are named in
+ * the log instead of silently blocking Next. (Playwright pierces shadow DOM.)
+ */
+async function reportUnsetDropdowns() {
+  for (const s of await page.locator("select").all()) {
+    if (!(await s.isVisible().catch(() => false))) continue;
+    const info = await s
+      .evaluate((el: HTMLSelectElement) => {
+        const txt = (el.options[el.selectedIndex]?.text || "").trim();
+        const unset = el.value === "" || txt === "" || /^select/i.test(txt);
+        let label = el.getAttribute("aria-label") || "";
+        if (!label && el.id) {
+          const l = (el.getRootNode() as Document | ShadowRoot).querySelector?.(`label[for="${el.id}"]`);
+          if (l) label = (l as HTMLElement).innerText.trim();
+        }
+        if (!label) { const w = el.closest("label"); if (w) label = (w as HTMLElement).innerText.trim(); }
+        return { unset, label };
+      })
+      .catch(() => null);
+    if (info?.unset && info.label) console.log(`  ⚠ unanswered required dropdown: "${info.label}" — add it to the issue file`);
   }
 }
 
@@ -214,7 +241,9 @@ try {
     await tryFill(page.getByLabel(/exact location/i), sanitize(ISSUE.exactLocation), "exact location (required)");
     await tryFill(page.getByLabel(/size and depth/i), sanitize(ISSUE.description), "size/depth description");
     await selectDropdown(/major road/i, ISSUE.majorRoad, "major road (required)");
+    await selectDropdown(/shoe ?box/i, ISSUE.shoeBoxOrLarger, "shoe box size (required)");
     if (ISSUE.additionalInfo) await tryFill(page.getByLabel(/additional information/i), sanitize(ISSUE.additionalInfo), "additional info");
+    await reportUnsetDropdowns(); // flag any required dropdown we still don't map
     await page.waitForTimeout(500);
     console.log("   → advancing to Contact…");
     await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});

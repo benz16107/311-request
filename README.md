@@ -32,6 +32,7 @@ Env:
   "exactLocation": "Northbound curb lane, ~10m south of Queen St W and York St.",
   "description": "Large pothole in the curb lane, about 40cm wide.",
   "majorRoad": "Yes",
+  "shoeBoxOrLarger": "Yes",
   "additionalInfo": "",
   "reporter": { "firstName": "Ben", "lastName": "Zhou", "email": "you@example.com", "phone": "416-555-0199" }
 }
