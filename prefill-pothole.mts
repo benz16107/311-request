@@ -174,28 +174,61 @@ function sanitize(s: string | undefined): string {
  * Lightning combobox (a button/role=combobox that opens a listbox of
  * role=option items) — the City uses the latter for some dropdowns, and
  * selectOption only works on a real <select>.
+ *
+ * Every path VERIFIES the value actually committed before logging success. The
+ * combobox needs this: step 3 has two Yes/No dropdowns (major road + shoe box),
+ * so an unscoped getByRole("option", {name:"No"}).first() can click a stray,
+ * hidden "No" from the OTHER dropdown — a silent no-op that leaves major road on
+ * its placeholder, blocks Next, and used to look like a hang. We therefore click
+ * the option in the listbox THIS combobox just opened, read the control back, and
+ * fall back to keyboard entry if it didn't take.
  */
 async function selectDropdown(labelRe: RegExp, value: string | undefined, label: string) {
   if (!value) return;
   const el = page.getByLabel(labelRe).first();
   const tag = (await el.count()) ? await el.evaluate((n) => n.tagName.toLowerCase()).catch(() => "") : "";
+
+  // What the control currently displays — used to confirm the value stuck.
+  const shownValue = async (loc: Locator): Promise<string> =>
+    ((await loc.inputValue().catch(() => "")) || (await loc.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+  const isSet = (shown: string) => new RegExp(`(^|\\b)${value}(\\b|$)`, "i").test(shown);
+
   if (tag === "select") {
-    try { await el.selectOption({ label: value }); console.log(`  ✓ ${label} → ${value}`); return; }
-    catch { try { await el.selectOption(value); console.log(`  ✓ ${label} → ${value}`); return; } catch {} }
+    try { await el.selectOption({ label: value }); } catch { try { await el.selectOption(value); } catch {} }
+    const selectedText = await el.evaluate((s: HTMLSelectElement) => s.options[s.selectedIndex]?.text || "").catch(() => "");
+    if (isSet(selectedText) || isSet(await shownValue(el))) { console.log(`  ✓ ${label} → ${value}`); return; }
     console.log(`  ✗ ${label}: option "${value}" not selectable — set it manually`);
     return;
   }
-  // Lightning combobox: click to open, then click the matching option.
+
+  // Lightning combobox: open it, click the matching option in the listbox it just
+  // opened (NOT a global option match), then verify the value committed; retry by
+  // keyboard if it didn't.
   const combo = (await el.count()) ? el : page.getByRole("combobox", { name: labelRe }).first();
   if (await combo.count()) {
-    try {
-      await combo.click();
-      const opt = page.getByRole("option", { name: value, exact: true }).first();
-      await opt.waitFor({ state: "visible", timeout: 4000 });
-      await opt.click();
-      console.log(`  ✓ ${label} → ${value}`);
-      return;
-    } catch {}
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await combo.scrollIntoViewIfNeeded().catch(() => {});
+        await combo.click({ timeout: 5000 });
+        // Exactly one listbox is visible once a combobox opens — scope to it so we
+        // can't click the other Yes/No dropdown's hidden option by mistake.
+        const open = page.locator('[role="listbox"]:visible').last();
+        const scope = (await open.count().catch(() => 0)) ? open : page;
+        const opt = scope.getByRole("option", { name: value, exact: true }).first();
+        await opt.waitFor({ state: "visible", timeout: 4000 });
+        await opt.click({ timeout: 4000 });
+      } catch {}
+      if (isSet(await shownValue(combo))) { console.log(`  ✓ ${label} → ${value}`); return; }
+      // Keyboard fallback: focus the combobox, type the option, commit with Enter.
+      try {
+        await combo.click({ timeout: 4000 });
+        await page.keyboard.type(value, { delay: 30 });
+        await page.keyboard.press("Enter");
+      } catch {}
+      if (isSet(await shownValue(combo))) { console.log(`  ✓ ${label} → ${value} (keyboard)`); return; }
+    }
+    console.log(`  ✗ ${label}: clicked "${value}" but the dropdown still reads ${JSON.stringify(await shownValue(combo))} — set it manually`);
+    return;
   }
   console.log(`  ✗ ${label} dropdown not found / "${value}" not selectable — set it manually`);
 }
@@ -657,7 +690,19 @@ export async function prefillPothole(issue: PotholeIssue, opts: PrefillOptions =
       await reportUnsetDropdowns(); // flag any required dropdown we still don't map
       console.log("   → advancing to Contact…");
       await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
-      // No post-click sleep: waitForStep(4) below blocks until the Contact step heading appears.
+      // If Next didn't advance, a required field didn't commit. Say so NOW instead
+      // of waiting out the full handoff in silence (which looked like a hang) — then
+      // waitForStep(4) below still gives the human time to fix it and continue.
+      if (!(await settle(page.getByRole("heading").filter({ hasText: /Step 4/i }), 5000))) {
+        console.log("  ⚠ still on Step 3 after Next — a required field didn't take:");
+        await reportUnsetDropdowns();
+        banner(
+          "ACTION NEEDED (human):\n" +
+            "  • A required Request Details field didn't commit (often a Yes/No\n" +
+            "    dropdown). Set it in the open browser and click Next.\n" +
+            "  The script will resume and fill Contact automatically.",
+        );
+      }
     }
 
     // 8. Contact → fill reporter details, then advance
