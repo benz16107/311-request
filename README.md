@@ -3,8 +3,16 @@
 A single-file MCP server that wraps the City of Toronto's **Open311 GeoReport v2** API so an
 LLM/agent can discover, file, and track 311 service requests (e.g. graffiti, potholes).
 
-All logic lives in [`mcp.ts`](mcp.ts). The Open311 client is decoupled from the MCP wiring, so
-you can lift it into an HTTP MCP server or a worker unchanged.
+The logic is split so the Open311 code is **transport-agnostic**:
+
+- [`src/open311.ts`](src/open311.ts) — the GeoReport v2 client + typed operations (no MCP).
+- [`src/complaints.ts`](src/complaints.ts) — `submitComplaint()`, the high-level entry point app code
+  imports. Routes through a **pluggable backend**: a real API `POST`, or a `draft` (ready-to-submit
+  package + human handoff) when no key is available.
+- [`mcp.ts`](mcp.ts) — a thin MCP adapter over the above, for agent/LLM callers.
+
+So a backend service (e.g. a pothole detector) imports `submitComplaint` directly, while an agent
+reaches the same logic over MCP — no duplicated logic.
 
 ## Tools
 
@@ -45,13 +53,42 @@ Env vars (see [`.env.example`](.env.example)): `TORONTO_311_BASE_URL`,
 }
 ```
 
+## Use from your own service (direct import)
+
+A backend service imports the high-level function in-process — no MCP, no HTTP:
+
+```ts
+import { submitComplaint } from "./src/complaints";
+
+const result = await submitComplaint({
+  serviceCode: "pothole",                 // a code from listServiceTypes()
+  description: "Large pothole, curb lane, ~40cm wide.",
+  location: { lat: 43.6532, long: -79.3832 }, // or { addressString: "100 Queen St W" }
+  mediaUrl: "https://.../pothole.jpg",
+  reporter: { firstName: "Ben", email: "you@example.com" },
+});
+
+if (result.status === "filed") {
+  console.log("service_request_id:", result.serviceRequestId);
+} else {
+  // No API key yet → a draft to submit by hand (official form or email).
+  console.log(result.handoff.formUrl, result.handoff.email);
+}
+```
+
+The backend is chosen automatically: real `POST` when `TORONTO_311_API_KEY` is set, otherwise a
+`draft`. Force one with `submitComplaint(input, { mode: "api" | "draft" })`. **Your calling code does
+not change when the key arrives** — set the env var and `status` flips from `draft` to `filed`.
+
 ## Getting a production API key (required to file real requests)
 
-Toronto grants Open311 keys manually. Until you have one, `file_service_request` will refuse to
-POST and the server runs read-only.
+Toronto grants Open311 keys manually. Until you have one, the API backend refuses to POST and
+`submitComplaint` returns a `draft` (the server runs read-only).
 
-1. **Request a key:** open <https://secure.toronto.ca/webwizard/start.jsp?_wiz_id=API_key_request>
-   and complete the form. Ask for **both a test and a production key** if offered.
+1. **Request a key:** the old self-serve form (`webwizard/start.jsp`) is **retired (404)**. Email the
+   **City of Toronto Open Data team at <opendata@toronto.ca>** (≈2 business-day reply), or call 311
+   (416-392-2489 from outside Toronto), and ask for Open311 / GeoReport v2 developer access — a
+   **test and a production key** if offered.
 2. **In your request, explicitly ask the City for:**
    - the **list of enabled `service_code`s** (the public channel historically only allows a
      limited set — e.g. graffiti and potholes — not the full 311 catalogue);

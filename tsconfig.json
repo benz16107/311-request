@@ -10,5 +10,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["mcp.ts"]
+  "include": ["mcp.ts", "src/**/*.ts"]
 }

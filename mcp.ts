@@ -1,108 +1,37 @@
 #!/usr/bin/env node
 /**
- * Toronto 311 (Open311 GeoReport v2) MCP server — everything in one file.
+ * Toronto 311 (Open311 GeoReport v2) MCP server — a THIN ADAPTER.
  *
- * Wraps the City of Toronto's Open311 API as four MCP tools:
- *   - list_service_types      → GET  services.json          (what can I file?)
- *   - get_service_definition  → GET  services/{code}.json   (required fields)
- *   - file_service_request    → POST requests.json          (file it — needs api_key)
- *   - check_request_status    → GET  requests/{id}.json     (track it)
+ * All Open311 logic lives in src/open311.ts; higher-level complaint
+ * orchestration (with a pluggable api/draft backend) lives in src/complaints.ts.
+ * Both are MCP-free, so the same code can be imported directly by a backend
+ * service or wrapped in HTTP. This file only maps those functions onto MCP tools
+ * for agent/LLM callers.
  *
- * Config via env (defaults point at the public TEST sandbox — no real requests filed):
- *   TORONTO_311_BASE_URL         default https://secure.toronto.ca/open311test/ws
- *   TORONTO_311_JURISDICTION_ID  default toronto.ca
- *   TORONTO_311_API_KEY          required only to POST (file_service_request)
+ * Tools:
+ *   - list_service_types      → listServiceTypes()      (what can I file?)
+ *   - get_service_definition  → getServiceDefinition()  (required fields)
+ *   - file_service_request    → fileServiceRequest()    (file it — needs api_key)
+ *   - check_request_status    → checkRequestStatus()    (track it)
  *
  * Run:  npx tsx mcp.ts        (speaks MCP over stdio)
- *
- * The Open311Client below is deliberately decoupled from the MCP wiring, so the
- * same logic drops into an HTTP MCP server or a queue worker unchanged.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const BASE_URL = (process.env.TORONTO_311_BASE_URL ?? "https://secure.toronto.ca/open311test/ws").replace(/\/+$/, "");
-const JURISDICTION_ID = process.env.TORONTO_311_JURISDICTION_ID ?? "toronto.ca";
-const API_KEY = process.env.TORONTO_311_API_KEY ?? "";
-
-const API_KEY_REQUEST_URL = "https://secure.toronto.ca/webwizard/start.jsp?_wiz_id=API_key_request";
-
-// ---------------------------------------------------------------------------
-// Open311 client
-// ---------------------------------------------------------------------------
-
-type Json = any;
-
-class Open311Error extends Error {
-  constructor(message: string, readonly status?: number, readonly snippet?: string) {
-    super(message);
-  }
-}
-
-type CallOpts = {
-  method?: "GET" | "POST";
-  query?: Record<string, string | undefined>;
-  form?: Record<string, string | undefined>;
-};
-
-async function call(path: string, opts: CallOpts = {}): Promise<Json> {
-  const method = opts.method ?? "GET";
-  const url = new URL(`${BASE_URL}/${path}`);
-  url.searchParams.set("jurisdiction_id", JURISDICTION_ID);
-  for (const [k, v] of Object.entries(opts.query ?? {})) {
-    if (v !== undefined && v !== "") url.searchParams.set(k, v);
-  }
-
-  const headers: Record<string, string> = {
-    "User-Agent": "toronto-311-mcp/0.1 (+https://modelcontextprotocol.io)",
-    Accept: "application/json",
-  };
-
-  let body: string | undefined;
-  if (method === "POST") {
-    const params = new URLSearchParams();
-    params.set("jurisdiction_id", JURISDICTION_ID);
-    for (const [k, v] of Object.entries(opts.form ?? {})) {
-      if (v !== undefined && v !== "") params.set(k, v);
-    }
-    body = params.toString();
-    headers["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8";
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(url, { method, headers, body });
-  } catch (e) {
-    throw new Open311Error(`Network error calling ${url.pathname}: ${(e as Error).message}`);
-  }
-
-  const text = await res.text();
-  const looksHtml = /^\s*</.test(text);
-
-  if (!res.ok) {
-    if (res.status === 403 && /access denied|edgesuite|akamai/i.test(text)) {
-      throw new Open311Error(
-        "Blocked by Toronto's edge/WAF (HTTP 403 Access Denied). This usually means the call needs a " +
-          "registered API key and/or must originate from an allow-listed network — not that the endpoint is down.",
-        res.status,
-        text.slice(0, 400),
-      );
-    }
-    throw new Open311Error(`Toronto 311 returned HTTP ${res.status}.`, res.status, text.slice(0, 800));
-  }
-
-  if (looksHtml) {
-    throw new Open311Error("Expected JSON but got an HTML page (likely an error/login page).", res.status, text.slice(0, 400));
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Open311Error("Response was not valid JSON.", res.status, text.slice(0, 400));
-  }
-}
+import {
+  API_KEY,
+  BASE_URL,
+  JURISDICTION_ID,
+  Open311Error,
+  checkRequestStatus,
+  fileServiceRequest,
+  getServiceDefinition,
+  listServiceTypes,
+  type Json,
+} from "./src/open311";
 
 // ---------------------------------------------------------------------------
 // MCP result helpers
@@ -136,7 +65,7 @@ server.registerTool(
   },
   async () => {
     try {
-      return ok(await call("services.json"));
+      return ok(await listServiceTypes());
     } catch (e) {
       return fail(e);
     }
@@ -156,7 +85,7 @@ server.registerTool(
   },
   async ({ service_code }) => {
     try {
-      return ok(await call(`services/${encodeURIComponent(service_code)}.json`));
+      return ok(await getServiceDefinition(service_code));
     } catch (e) {
       return fail(e);
     }
@@ -190,37 +119,7 @@ server.registerTool(
   },
   async (args) => {
     try {
-      if (!API_KEY) {
-        return fail(
-          new Open311Error(
-            "TORONTO_311_API_KEY is not set. Toronto requires a registered API key to file a request. " +
-              `Request one at ${API_KEY_REQUEST_URL}`,
-          ),
-        );
-      }
-      const hasCoords = args.lat !== undefined && args.long !== undefined;
-      if (!hasCoords && !args.address_string) {
-        return fail(new Open311Error("A location is required: provide lat AND long, or address_string."));
-      }
-
-      const form: Record<string, string | undefined> = {
-        api_key: API_KEY,
-        service_code: args.service_code,
-        description: args.description,
-        lat: args.lat?.toString(),
-        long: args.long?.toString(),
-        address_string: args.address_string,
-        first_name: args.first_name,
-        last_name: args.last_name,
-        email: args.email,
-        phone: args.phone,
-        media_url: args.media_url,
-      };
-      for (const [k, v] of Object.entries(args.attributes ?? {})) {
-        form[`attribute[${k}]`] = v;
-      }
-
-      return ok(await call("requests.json", { method: "POST", form }));
+      return ok(await fileServiceRequest(args));
     } catch (e) {
       return fail(e);
     }
@@ -241,14 +140,7 @@ server.registerTool(
   },
   async ({ service_request_id, token }) => {
     try {
-      if (!service_request_id && !token) {
-        return fail(new Open311Error("Provide a service_request_id or a token."));
-      }
-      const query = { api_key: API_KEY || undefined };
-      if (token && !service_request_id) {
-        return ok(await call(`tokens/${encodeURIComponent(token)}.json`, { query }));
-      }
-      return ok(await call(`requests/${encodeURIComponent(service_request_id!)}.json`, { query }));
+      return ok(await checkRequestStatus({ service_request_id, token }));
     } catch (e) {
       return fail(e);
     }
