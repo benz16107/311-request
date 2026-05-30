@@ -5,6 +5,11 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.claude
+
+# Personal issue file(s) — hold your name/email/phone; keep local, don't commit
+issue.json
+*.issue.json
 
 # Logs
 *.log
