@@ -5,7 +5,7 @@ A headed, **human-in-the-loop** Playwright script that pre-fills the City of Tor
 for the two things automation can't do — confirming the map-pin location and solving the
 invisible reCAPTCHA. **It never submits.**
 
-Everything lives in [`scripts/prefill-pothole.mts`](scripts/prefill-pothole.mts).
+Everything lives in [`prefill-pothole.mts`](prefill-pothole.mts).
 
 ## Run
 

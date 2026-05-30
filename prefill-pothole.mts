@@ -5,7 +5,7 @@
  * automation legitimately can't: confirming the map-pin location and solving
  * the invisible reCAPTCHA at submit. The script NEVER submits.
  *
- *   npx tsx scripts/prefill-pothole.mts [issue.json]
+ *   npx tsx prefill-pothole.mts [issue.json]
  *
  *   HEADLESS=1            run without a window (won't get past the map step)
  *   HANDOFF_TIMEOUT_MS=…  how long to wait for the human at each handoff (def 300000)
