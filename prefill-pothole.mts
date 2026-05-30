@@ -67,19 +67,18 @@ export const DEFAULT_ISSUE: PotholeIssue = {
   onTorontoIsland: "No",
   roadType: "Road",
   inBikeLane: "No",
-  address: "100 Queen St W, Toronto",
-  exactLocation: "Northbound curb lane, about 10m south of the Queen St W and York St intersection, in front of the building entrance.",
-  description: "Large pothole in the curb lane, about 40cm wide and deep enough to jolt a car.",
+  address: "None",
+  exactLocation: "",
+  description: "",
   majorRoad: "Yes",
   shoeBoxOrLarger: "Yes",
   additionalInfo: "",
-  photos: [], // e.g. ["./pothole.jpg", "/abs/path/closeup.png"] — attached on the Request Details step
   anonymous: false,
   reporter: {
-    firstName: "Ben",
-    lastName: "Zhou",
-    email: "benz16107@gmail.com",
-    phone: "416-555-0100", // PLACEHOLDER (555-01xx is a reserved fictitious range) — replace with a real number
+    firstName: "Name1",
+    lastName: "Name2",
+    email: "email@email.com",
+    phone: "123-456-7890", // PLACEHOLDER (555-01xx is a reserved fictitious range) — replace with a real number
     deviceType: "Mobile",
     smsUpdates: true,
     emailUpdates: true,
