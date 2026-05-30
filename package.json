@@ -4,13 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prefill": "tsx scripts/prefill-pothole.mts",
-    "typecheck": "tsc --noEmit"
+    "prefill": "tsx scripts/prefill-pothole.mts"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
     "playwright": "^1.60.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "tsx": "^4.19.0"
   }
 }
