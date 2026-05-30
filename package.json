@@ -1,21 +1,11 @@
 {
-  "name": "toronto-311-mcp",
+  "name": "toronto-311-prefill",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "toronto-311-mcp": "mcp.ts"
-  },
   "scripts": {
-    "dev": "tsx mcp.ts",
-    "start": "tsx mcp.ts",
-    "typecheck": "tsc --noEmit",
-    "inspect": "npx @modelcontextprotocol/inspector npx tsx mcp.ts",
-    "prefill": "tsx scripts/prefill-pothole.mts"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.23.8"
+    "prefill": "tsx scripts/prefill-pothole.mts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
