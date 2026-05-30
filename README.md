@@ -29,10 +29,17 @@ Env:
   "roadType": "Road",
   "inBikeLane": "No",
   "address": "100 Queen St W, Toronto",
-  "description": "Large pothole in the curb lane, ~40cm wide.",
-  "reporter": { "firstName": "Ben", "email": "you@example.com" }
+  "exactLocation": "Northbound curb lane, ~10m south of Queen St W and York St.",
+  "description": "Large pothole in the curb lane, about 40cm wide.",
+  "majorRoad": "Yes",
+  "additionalInfo": "",
+  "reporter": { "firstName": "Ben", "lastName": "Zhou", "email": "you@example.com", "phone": "416-555-0199" }
 }
 ```
+
+Free-text fields (`exactLocation`, `description`, `additionalInfo`) are auto-sanitized — disallowed
+characters (e.g. `~`, `#`, `*`) are stripped and text is capped at 255 chars, since the form rejects
+anything outside `a–z 0–9 space ( ) @ , ' & / ? - : .`
 
 ## How it works
 

@@ -32,7 +32,11 @@ type PotholeIssue = {
   roadType: "Road" | "Expressway";
   inBikeLane: "Yes" | "No";
   address: string;
-  description: string;
+  // --- Request Details step ---
+  exactLocation: string; // required: distance from intersection, landmarks, side of road
+  description: string; // "Describe the size and depth of the road damage."
+  majorRoad: "Yes" | "No"; // required dropdown: "Is the road damage on a major road?"
+  additionalInfo?: string; // optional
   reporter?: { firstName?: string; lastName?: string; email?: string; phone?: string };
 };
 
@@ -42,7 +46,10 @@ const DEFAULT_ISSUE: PotholeIssue = {
   roadType: "Road",
   inBikeLane: "No",
   address: "100 Queen St W, Toronto",
-  description: "Large pothole in the curb lane, ~40cm wide, deep enough to jolt a car.",
+  exactLocation: "Northbound curb lane, about 10m south of the Queen St W and York St intersection, in front of the building entrance.",
+  description: "Large pothole in the curb lane, about 40cm wide and deep enough to jolt a car.",
+  majorRoad: "Yes",
+  additionalInfo: "",
   reporter: { firstName: "Ben", email: "benz16107@gmail.com" },
 };
 
@@ -92,6 +99,29 @@ async function tryFill(locator: ReturnType<Page["locator"]>, value: string | und
     console.log(`  ✓ ${label}`);
   } else {
     console.log(`  ✗ ${label} field not found — enter manually: ${JSON.stringify(value)}`);
+  }
+}
+
+/**
+ * The form's free-text fields reject anything outside this set (alphanumeric,
+ * space, and  ( ) @ , ' & / ? - : .  ) and cap at 255 chars. Replace disallowed
+ * characters with a space, collapse, and truncate — so e.g. "~40cm" → "40cm".
+ */
+function sanitize(s: string | undefined): string {
+  return (s ?? "").replace(/[^A-Za-z0-9 ()@,'&/?:.\-]/g, " ").replace(/\s+/g, " ").trim().slice(0, 255);
+}
+
+/** Best-effort select for a native <select> by its label. */
+async function selectDropdown(labelRe: RegExp, value: string | undefined, label: string) {
+  if (!value) return;
+  const sel = page.getByLabel(labelRe).first();
+  if (!(await sel.count())) { console.log(`  ✗ ${label} dropdown not found`); return; }
+  try {
+    await sel.selectOption({ label: value });
+    console.log(`  ✓ ${label} → ${value}`);
+  } catch {
+    try { await sel.selectOption(value); console.log(`  ✓ ${label} → ${value}`); }
+    catch { console.log(`  ✗ ${label}: option "${value}" not selectable — set it manually`); }
   }
 }
 
@@ -178,13 +208,13 @@ try {
     );
   }
 
-  // 7. Resume on Request Details → fill description
+  // 7. Request Details → fill the required fields, then advance
   if (await waitForStep(3, "Request Details")) {
-    console.log("7. fill description…");
-    // Target a labelled description field (not just "first visible textarea",
-    // which on other steps would be the wrong box).
-    const desc = page.getByLabel(/describ|provide details|details of your request|tell us|what.*happen|comment/i).first();
-    await tryFill(desc, ISSUE.description, "description");
+    console.log("7. fill request details…");
+    await tryFill(page.getByLabel(/exact location/i), sanitize(ISSUE.exactLocation), "exact location (required)");
+    await tryFill(page.getByLabel(/size and depth/i), sanitize(ISSUE.description), "size/depth description");
+    await selectDropdown(/major road/i, ISSUE.majorRoad, "major road (required)");
+    if (ISSUE.additionalInfo) await tryFill(page.getByLabel(/additional information/i), sanitize(ISSUE.additionalInfo), "additional info");
     await page.waitForTimeout(500);
     console.log("   → advancing to Contact…");
     await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
