@@ -186,26 +186,38 @@ try {
     const desc = page.getByLabel(/describ|provide details|details of your request|tell us|what.*happen|comment/i).first();
     await tryFill(desc, ISSUE.description, "description");
     await page.waitForTimeout(500);
-    banner("Description filled. Review it, then click Next to continue to Contact.");
+    console.log("   → advancing to Contact…");
+    await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(5000);
   }
 
-  // 8. Resume on Contact → pre-fill reporter details
+  // 8. Contact → fill reporter details, then advance
   if (await waitForStep(4, "Contact")) {
-    console.log("8. pre-fill contact…");
+    console.log("8. fill contact…");
     await tryFill(page.getByLabel(/first name/i), ISSUE.reporter?.firstName, "first name");
     await tryFill(page.getByLabel(/last name/i), ISSUE.reporter?.lastName, "last name");
     await tryFill(page.getByLabel(/email/i), ISSUE.reporter?.email, "email");
     await tryFill(page.getByLabel(/phone/i), ISSUE.reporter?.phone, "phone");
-    banner("Contact pre-filled. Click Next to reach Review & Submit.");
+    await page.waitForTimeout(500);
+    console.log("   → advancing to Review…");
+    await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(5000);
   }
 
-  // 9. Stop at Review & Submit — the human solves reCAPTCHA and submits.
+  // 9. Stop at Review & Submit — everything is filled; the human solves the
+  //    reCAPTCHA and clicks Submit. The script never submits.
   if (await waitForStep(5, "Review")) {
     banner(
-      "FINAL STEP (human):\n" +
-        "  • Review everything.\n" +
+      "ALL FIELDS FILLED — over to you (human):\n" +
+        "  • Review everything in the open browser.\n" +
         "  • Solve the reCAPTCHA and click Submit yourself.\n" +
         "  This script will NOT submit. Close the window when done.",
+    );
+  } else {
+    banner(
+      "Stopped before Review. A step likely has a required field the script\n" +
+        "didn't fill (it won't advance until that's set). Fill it in the browser\n" +
+        "and continue, or tell me the field so I can add it.",
     );
   }
 
