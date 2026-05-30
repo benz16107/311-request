@@ -38,7 +38,7 @@ export type PotholeIssue = {
   onTorontoIsland: "Yes" | "No";
   roadType: "Road" | "Expressway";
   inBikeLane: "Yes" | "No";
-  address: string;
+  address: string; // a real street address / intersection / park / landmark, e.g. "75 St Nicholas St, Toronto" — NOT lat/lng coordinates; this is typed into the City geocoder, which only matches place names
   // --- Request Details step ---
   exactLocation: string; // required: distance from intersection, landmarks, side of road
   description: string; // "Describe the size and depth of the road damage."
@@ -569,6 +569,10 @@ async function attachPhotos(paths: string[] | undefined): Promise<boolean> {
  * (api.toronto.ca/cotgeocoder); if it returns nothing — the network is
  * edge-blocked, the service is down, or there's no match — this returns false
  * and the caller falls back to a human handoff.
+ *
+ * `value` must be a real street address, intersection, park, or landmark (the
+ * same thing you'd type into the City's location box) — NOT lat/lng
+ * coordinates, which the geocoder won't match.
  */
 async function selectAddress(value: string): Promise<boolean> {
   const addr = page.getByLabel("Address, Intersection, Park Name or Landmark").first();

@@ -130,7 +130,7 @@ won't advance without it; the import path needs you to supply these (the CLI bac
 | `onTorontoIsland` | `"Yes"`\|`"No"` | ✅ | Qualifying radio. |
 | `roadType` | `"Road"`\|`"Expressway"` | ✅ | Qualifying radio. |
 | `inBikeLane` | `"Yes"`\|`"No"` | ✅ | Qualifying radio. |
-| `address` | string | ✅ | "Address, Intersection, Park Name or Landmark" — fed to Toronto's geocoder autocomplete, e.g. `"100 Queen St W, Toronto"`. |
+| `address` | string | ✅ | "Address, Intersection, Park Name or Landmark" — fed to Toronto's geocoder autocomplete, e.g. `"100 Queen St W, Toronto"`. Must be a real **street address / intersection / landmark, not lat/lng coordinates** — the geocoder only matches place names. |
 | `exactLocation` | string | ✅ | Distance from the intersection, side of road, landmarks. Sanitized, ≤255 chars. |
 | `description` | string | ✅ | "Describe the size and depth of the road damage." Sanitized, ≤255 chars. |
 | `majorRoad` | `"Yes"`\|`"No"` | ✅ | "Is the road damage on a major road?" dropdown. |
