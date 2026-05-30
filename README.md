@@ -100,6 +100,33 @@ Toronto grants Open311 keys manually. Until you have one, the API backend refuse
    · Open311 spec — <https://wiki.open311.org/GeoReport_v2/>
 4. When the key arrives, set `TORONTO_311_API_KEY` and point `TORONTO_311_BASE_URL` at production.
 
+## Browser pre-fill (experimental, human-in-the-loop)
+
+Since the API needs a key we may not have, [`scripts/prefill-pothole.mts`](scripts/prefill-pothole.mts)
+drives the **public web form** with Playwright as a fallback. It pre-fills everything it reliably can,
+then **hands off to a human** for the two things automation legitimately cannot do — confirming the
+map-pin location and solving the invisible reCAPTCHA. **It never submits.**
+
+```bash
+npx tsx scripts/prefill-pothole.mts            # built-in sample issue
+npx tsx scripts/prefill-pothole.mts issue.json # your own issue
+```
+
+The form is a multi-step Salesforce Lightning wizard:
+
+```
+outer SPA : deep link → concern dropdown → 3 qualifying radios → Start
+inner form: 1 Terms → 2 Location[HUMAN: pin] → 3 Request Details → 4 Contact → 5 Review[HUMAN: reCAPTCHA + Submit]
+```
+
+**Caveats — this is a brittle spike, not production:**
+- Selectors target Salesforce shadow DOM and **will break** when the City changes the flow.
+- Steps **1–6 (through typing the address) are verified**; the auto-fill on Steps 3–4 is best-effort
+  and only runs once the human crosses the Step-2 map-pin gate — if a field isn't found it tells the
+  human to enter it manually (it never writes into the wrong box).
+- Fully-unattended filing is **not possible** (reCAPTCHA + map geocode) and not attempted.
+- For real automation, prefer the API key below — this is a single-user convenience only.
+
 ## Known constraints
 
 - **Limited scope:** only the City-enabled `service_code`s can be filed. Verify with

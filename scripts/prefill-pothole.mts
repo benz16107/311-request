@@ -1,0 +1,175 @@
+/**
+ * Headed, human-in-the-loop pre-fill for a Toronto 311 "Road Pothole / Road
+ * Damage" service request. The robot does the tedious wizard navigation and
+ * pre-fills every field it reliably can; a human handles the two things
+ * automation legitimately can't: confirming the map-pin location and solving
+ * the invisible reCAPTCHA at submit. The script NEVER submits.
+ *
+ *   npx tsx scripts/prefill-pothole.mts [issue.json]
+ *
+ *   HEADLESS=1            run without a window (won't get past the map step)
+ *   HANDOFF_TIMEOUT_MS=…  how long to wait for the human at each handoff (def 300000)
+ *
+ * Flow (see README "Browser pre-fill"):
+ *   outer SPA:  deep link -> concern -> 3 qualifying radios -> Start
+ *   inner form: 1 Terms -> 2 Location[HUMAN pin] -> 3 Request Details
+ *               -> 4 Contact -> 5 Review[HUMAN reCAPTCHA + Submit]
+ *
+ * Brittleness: the inner form is Salesforce Lightning (shadow DOM). Steps 1-7
+ * and the Step-3/4 field selectors are best-effort and WILL need updating when
+ * the City changes the flow; unfound fields fall back to "fill this yourself".
+ */
+import { readFileSync } from "node:fs";
+import { chromium, type Page } from "playwright";
+
+// Deep link straight to the pothole/road form (skips the category click-through).
+const FORM =
+  "https://www.toronto.ca/home/311-toronto-at-your-service/create-a-service-request/service-request/?request=0VS6g000000DzbXGAS";
+
+type PotholeIssue = {
+  concern: string;
+  onTorontoIsland: "Yes" | "No";
+  roadType: "Road" | "Expressway";
+  inBikeLane: "Yes" | "No";
+  address: string;
+  description: string;
+  reporter?: { firstName?: string; lastName?: string; email?: string; phone?: string };
+};
+
+const DEFAULT_ISSUE: PotholeIssue = {
+  concern: "Road Pothole / Road Damage",
+  onTorontoIsland: "No",
+  roadType: "Road",
+  inBikeLane: "No",
+  address: "100 Queen St W, Toronto",
+  description: "Large pothole in the curb lane, ~40cm wide, deep enough to jolt a car.",
+  reporter: { firstName: "Ben", email: "benz16107@gmail.com" },
+};
+
+const issuePath = process.argv[2];
+const ISSUE: PotholeIssue = issuePath ? { ...DEFAULT_ISSUE, ...JSON.parse(readFileSync(issuePath, "utf8")) } : DEFAULT_ISSUE;
+const HANDOFF_MS = Number(process.env.HANDOFF_TIMEOUT_MS ?? 300000);
+
+const browser = await chromium.launch({ headless: process.env.HEADLESS === "1" });
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 2600 } });
+const page = await ctx.newPage();
+
+const banner = (s: string) => console.log(`\n${"─".repeat(60)}\n${s}\n${"─".repeat(60)}`);
+
+async function answerRadio(page: Page, qFragment: string, option: string) {
+  const fs = page.locator("fieldset").filter({ hasText: qFragment }).first();
+  if (await fs.count()) {
+    await fs.getByText(option, { exact: true }).first().click({ timeout: 5000 });
+    console.log(`  ✓ "${qFragment}" → ${option}`);
+  } else console.log(`  ✗ question not found: "${qFragment}"`);
+}
+
+/**
+ * Wait for the inner wizard to reach "Step N: <name>". We match the page
+ * HEADING only (role=heading) — the step stepper repeats every step's label in
+ * the DOM at all times, so a plain getByText would match immediately and skip
+ * the human handoff. The active step's number appears only in the heading.
+ */
+async function waitForStep(n: number, name: string): Promise<boolean> {
+  try {
+    await page
+      .getByRole("heading")
+      .filter({ hasText: new RegExp(`Step ${n}:\\s*${name}`, "i") })
+      .first()
+      .waitFor({ timeout: HANDOFF_MS });
+    return true;
+  } catch {
+    console.log(`  …did not reach "Step ${n}: ${name}" (human handoff not completed) — skipping auto-fill.`);
+    return false;
+  }
+}
+
+/** Best-effort fill; if the field isn't found, tell the human to enter it. */
+async function tryFill(locator: ReturnType<Page["locator"]>, value: string | undefined, label: string) {
+  if (!value) return;
+  if (await locator.count()) {
+    await locator.first().fill(value).catch(() => {});
+    console.log(`  ✓ ${label}`);
+  } else {
+    console.log(`  ✗ ${label} field not found — enter manually: ${JSON.stringify(value)}`);
+  }
+}
+
+try {
+  console.log("issue:", issuePath ? `(from ${issuePath})` : "(built-in sample)");
+
+  console.log("\n1. deep-link to pothole form…");
+  await page.goto(FORM, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForTimeout(7000);
+
+  console.log("2. select concern + Continue…");
+  await page.getByLabel(/what is the concern/i).first().selectOption({ label: ISSUE.concern });
+  await page.getByRole("button", { name: /continue/i }).first().click({ timeout: 8000 });
+  await page.waitForTimeout(6000);
+
+  console.log("3. answer qualifying questions…");
+  await answerRadio(page, "Toronto Island", ISSUE.onTorontoIsland);
+  await answerRadio(page, "road or expressway", ISSUE.roadType);
+  await answerRadio(page, "bike lane", ISSUE.inBikeLane);
+
+  console.log("4. Start your Request…");
+  await page.getByRole("button", { name: /start your request/i }).first().click({ timeout: 8000 });
+  await page.waitForTimeout(9000);
+
+  console.log("5. accept Terms of Use…");
+  const cb = page.getByRole("checkbox").first();
+  if (await cb.count()) { await cb.check({ timeout: 5000 }).catch(() => cb.click()); console.log("  ✓ agreed"); }
+  await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(6000);
+
+  console.log("6. pre-fill location…");
+  const addr = page.getByLabel("Address, Intersection, Park Name or Landmark").first();
+  await tryFill(addr, ISSUE.address, "address typed");
+  await page.getByRole("button", { name: /find address/i }).first().click({ timeout: 6000 }).catch(() => {});
+  await page.waitForTimeout(3000);
+
+  banner(
+    "ACTION NEEDED (human):\n" +
+      "  • In the open browser, pick the matching address suggestion and confirm\n" +
+      "    the map pin, then click Next.\n" +
+      "  The script will resume and fill the description automatically.",
+  );
+
+  // 7. Resume on Request Details → fill description
+  if (await waitForStep(3, "Request Details")) {
+    console.log("7. fill description…");
+    // Target a labelled description field (not just "first visible textarea",
+    // which on other steps would be the wrong box).
+    const desc = page.getByLabel(/describ|provide details|details of your request|tell us|what.*happen|comment/i).first();
+    await tryFill(desc, ISSUE.description, "description");
+    await page.waitForTimeout(500);
+    banner("Description filled. Review it, then click Next to continue to Contact.");
+  }
+
+  // 8. Resume on Contact → pre-fill reporter details
+  if (await waitForStep(4, "Contact")) {
+    console.log("8. pre-fill contact…");
+    await tryFill(page.getByLabel(/first name/i), ISSUE.reporter?.firstName, "first name");
+    await tryFill(page.getByLabel(/last name/i), ISSUE.reporter?.lastName, "last name");
+    await tryFill(page.getByLabel(/email/i), ISSUE.reporter?.email, "email");
+    await tryFill(page.getByLabel(/phone/i), ISSUE.reporter?.phone, "phone");
+    banner("Contact pre-filled. Click Next to reach Review & Submit.");
+  }
+
+  // 9. Stop at Review & Submit — the human solves reCAPTCHA and submits.
+  if (await waitForStep(5, "Review")) {
+    banner(
+      "FINAL STEP (human):\n" +
+        "  • Review everything.\n" +
+        "  • Solve the reCAPTCHA and click Submit yourself.\n" +
+        "  This script will NOT submit. Close the window when done.",
+    );
+  }
+
+  if (process.env.HEADLESS !== "1") await page.waitForTimeout(HANDOFF_MS);
+} catch (e) {
+  console.log("ERROR:", (e as Error).message.split("\n")[0]);
+  await page.screenshot({ path: "/tmp/311-prefill-error.png", fullPage: true }).catch(() => {});
+} finally {
+  await browser.close();
+}
