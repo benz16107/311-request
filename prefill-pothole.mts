@@ -12,8 +12,8 @@
  *
  * Flow (see README "Browser pre-fill"):
  *   outer SPA:  deep link -> concern -> 3 qualifying radios -> Start
- *   inner form: 1 Terms -> 2 Location[HUMAN pin] -> 3 Request Details
- *               -> 4 Contact -> 5 Review[HUMAN reCAPTCHA + Submit]
+ *   inner form: 1 Terms -> 2 Location[auto-pick address; human pin fallback]
+ *               -> 3 Request Details -> 4 Contact -> 5 Review[HUMAN reCAPTCHA + Submit]
  *
  * Brittleness: the inner form is Salesforce Lightning (shadow DOM). Steps 1-7
  * and the Step-3/4 field selectors are best-effort and WILL need updating when
@@ -95,6 +95,42 @@ async function tryFill(locator: ReturnType<Page["locator"]>, value: string | und
   }
 }
 
+/**
+ * Type the address and click the geocoder's first matching suggestion (which
+ * drops the map pin and validates the location). Returns true if a suggestion
+ * was clicked. Suggestions come from Toronto's geocoder
+ * (api.toronto.ca/cotgeocoder); if it returns nothing — the network is
+ * edge-blocked, the service is down, or there's no match — this returns false
+ * and the caller falls back to a human handoff.
+ */
+async function selectAddress(value: string): Promise<boolean> {
+  const addr = page.getByLabel("Address, Intersection, Park Name or Landmark").first();
+  if (!(await addr.count())) { console.log("  ✗ address field not found"); return false; }
+  await addr.click();
+  await addr.fill("");
+  await addr.pressSequentially(value, { delay: 120 }); // per-keystroke typing triggers the autocomplete
+
+  const options = page.getByRole("option");
+  try {
+    await options.first().waitFor({ state: "visible", timeout: 10000 });
+  } catch {
+    console.log("  ⚠ no address suggestions appeared (geocoder unreachable here, or no match)");
+    await page.getByRole("button", { name: /find address/i }).first().click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    return false;
+  }
+
+  // Prefer a suggestion containing the street part; otherwise take the first (best match).
+  const street = value.split(",")[0].trim();
+  let target = options.filter({ hasText: street }).first();
+  if (!(await target.count())) target = options.first();
+  const text = (await target.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+  await target.click();
+  console.log(`  ✓ picked address suggestion: ${text || street}`);
+  await page.waitForTimeout(2500); // let the pin drop / location validate
+  return true;
+}
+
 try {
   console.log("issue:", issuePath ? `(from ${issuePath})` : "(built-in sample)");
 
@@ -122,18 +158,25 @@ try {
   await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(6000);
 
-  console.log("6. pre-fill location…");
-  const addr = page.getByLabel("Address, Intersection, Park Name or Landmark").first();
-  await tryFill(addr, ISSUE.address, "address typed");
-  await page.getByRole("button", { name: /find address/i }).first().click({ timeout: 6000 }).catch(() => {});
-  await page.waitForTimeout(3000);
+  console.log("6. fill location + auto-pick address suggestion…");
+  await selectAddress(ISSUE.address);
 
-  banner(
-    "ACTION NEEDED (human):\n" +
-      "  • In the open browser, pick the matching address suggestion and confirm\n" +
-      "    the map pin, then click Next.\n" +
-      "  The script will resume and fill the description automatically.",
-  );
+  // If the geocoder validated the address (dropped the pin), Next advances to
+  // Step 3 with no human needed. Otherwise, hand off to confirm the pin.
+  await page.getByRole("button", { name: /^next$/i }).first().click({ timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(4000);
+  const onStep3 = (await page.getByRole("heading").filter({ hasText: /Step 3/i }).first().count()) > 0;
+  if (onStep3) {
+    console.log("  ✓ address auto-confirmed — advanced to Request Details");
+  } else {
+    banner(
+      "ACTION NEEDED (human):\n" +
+        "  • The address wasn't auto-confirmed (geocoder returned no suggestion, or\n" +
+        "    the map pin needs confirming). In the open browser, pick the address\n" +
+        "    suggestion / confirm the pin, then click Next.\n" +
+        "  The script will resume and fill the rest automatically.",
+    );
+  }
 
   // 7. Resume on Request Details → fill description
   if (await waitForStep(3, "Request Details")) {

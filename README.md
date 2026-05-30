@@ -38,21 +38,27 @@ Env:
 
 ```
 outer SPA : deep link → concern dropdown → 3 qualifying radios → Start
-inner form: 1 Terms → 2 Location[HUMAN: pin] → 3 Request Details → 4 Contact → 5 Review[HUMAN: reCAPTCHA + Submit]
+inner form: 1 Terms → 2 Location[auto-pick address; human fallback] → 3 Request Details → 4 Contact → 5 Review[HUMAN: reCAPTCHA + Submit]
 ```
 
 The script deep-links past the category click-through, selects the concern, answers the
-qualifying questions, accepts the Terms, and types/geocodes the address — then waits for you to
-confirm the map pin. It resumes to fill description/contact and stops at Review for you to solve
-the reCAPTCHA and submit.
+qualifying questions, and accepts the Terms. On the Location step it types the address, waits for
+Toronto's geocoder autocomplete, and **clicks the first matching suggestion** (which drops the map
+pin) — then advances automatically. It fills description/contact and stops at Review for you to
+solve the reCAPTCHA and submit. If the geocoder returns no suggestion, it hands off so you can pick
+the address / confirm the pin, then resumes.
 
 ## Caveats
 
 - **Brittle by nature:** the form is a multi-step Salesforce Lightning wizard (shadow DOM);
   selectors will break when the City changes the flow.
-- Steps **1–6 (through typing the address) are verified**; the Step 3–4 auto-fill is best-effort
-  and only runs after you cross the map-pin gate — unfound fields fall back to "enter manually"
-  rather than writing into the wrong box.
+- Steps **1–6 (through typing the address) are verified**; the address auto-pick and Step 3–4
+  auto-fill are best-effort — unfound fields fall back to "enter manually" rather than writing into
+  the wrong box.
+- The address autocomplete uses Toronto's geocoder (`api.toronto.ca/cotgeocoder`), which is **blocked
+  from data-center / unrecognized networks** (returns HTTP 400, same edge protection as the Open311
+  API). From such a network no suggestions appear and the script hands the address step to a human;
+  from a normal residential connection it auto-picks.
 - **Fully-unattended filing is not possible** (reCAPTCHA + map geocode) and not attempted.
 - The City's official **Open311 API** is the only clean automated path, but it requires a
   manually-issued API key + egress-IP allow-listing (email <opendata@toronto.ca>).
